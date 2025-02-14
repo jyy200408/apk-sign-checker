@@ -7,8 +7,93 @@ const https = require('https');
 const url = require('url');
 const app = express();
 
+// 文件清理配置
+const UPLOADS_DIR = 'uploads';
+const MAX_TOTAL_SIZE = 1024 * 1024 * 1024; // 1GB
+const FILE_MAX_AGE = 24 * 60 * 60 * 1000; // 24小时
+const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1小时
+
+// 确保上传目录存在
+if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR);
+}
+
+// 获取目录总大小（字节）
+function getDirectorySize(directoryPath) {
+    let totalSize = 0;
+    const files = fs.readdirSync(directoryPath);
+    
+    files.forEach(file => {
+        const filePath = path.join(directoryPath, file);
+        const stats = fs.statSync(filePath);
+        if (stats.isFile()) {
+            totalSize += stats.size;
+        }
+    });
+    
+    return totalSize;
+}
+
+// 清理旧文件
+function cleanupOldFiles() {
+    const now = Date.now();
+    const files = fs.readdirSync(UPLOADS_DIR);
+    
+    files.forEach(file => {
+        const filePath = path.join(UPLOADS_DIR, file);
+        const stats = fs.statSync(filePath);
+        
+        // 删除超过24小时的文件
+        if (now - stats.atime.getTime() > FILE_MAX_AGE) {
+            try {
+                fs.unlinkSync(filePath);
+                console.log(`已删除过期文件: ${file}`);
+            } catch (err) {
+                console.error(`删除文件失败: ${file}`, err);
+            }
+        }
+    });
+}
+
+// 检查并维持存储空间限制
+function enforceStorageLimit() {
+    const totalSize = getDirectorySize(UPLOADS_DIR);
+    if (totalSize > MAX_TOTAL_SIZE * 0.9) { // 当使用空间超过90%时
+        const files = fs.readdirSync(UPLOADS_DIR)
+            .map(file => {
+                const filePath = path.join(UPLOADS_DIR, file);
+                const stats = fs.statSync(filePath);
+                return { path: filePath, atime: stats.atime };
+            })
+            .sort((a, b) => a.atime - b.atime); // 按访问时间排序
+        
+        // 从最旧的文件开始删除，直到空间足够
+        while (getDirectorySize(UPLOADS_DIR) > MAX_TOTAL_SIZE * 0.7) { // 删除到70%以下
+            if (files.length === 0) break;
+            const oldestFile = files.shift();
+            try {
+                fs.unlinkSync(oldestFile.path);
+                console.log(`已删除最旧文件: ${path.basename(oldestFile.path)}`);
+            } catch (err) {
+                console.error(`删除文件失败: ${path.basename(oldestFile.path)}`, err);
+            }
+        }
+    }
+}
+
+// 定期清理任务
+setInterval(() => {
+    console.log('开始执行定期清理...');
+    cleanupOldFiles();
+    enforceStorageLimit();
+}, CLEANUP_INTERVAL);
+
+// 启动时执行一次清理
+cleanupOldFiles();
+enforceStorageLimit();
+
 const upload = multer({
-    dest: 'uploads/',
+    dest: UPLOADS_DIR,
     limits: {
         fileSize: 500 * 1024 * 1024, // 限制文件大小为500MB
     },
@@ -38,7 +123,7 @@ app.post('/verify', upload.single('apk'), (req, res) => {
             return res.status(400).json({ error: '链接必须指向APK文件' });
         }
 
-        const fileName = path.join('uploads', path.basename(url.parse(fileUrl).pathname));
+        const fileName = path.join(UPLOADS_DIR, path.basename(url.parse(fileUrl).pathname));
         const file = fs.createWriteStream(fileName);
 
         const protocol = fileUrl.toLowerCase().startsWith('https://') ? https : require('http');
@@ -71,7 +156,6 @@ app.post('/verify', upload.single('apk'), (req, res) => {
 });
 
 function verifyApkSignature(apkPath, res) {
-
     const command = `apksigner verify -v --print-certs "${apkPath}"`;
     exec(command, (error, stdout, stderr) => {
         if (error) {
