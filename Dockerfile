@@ -32,11 +32,14 @@ COPY package*.json ./
 # 安装项目依赖
 RUN npm install
 
+# 复制项目文件
+COPY . .
+
 # 创建上传目录并设置权限
 RUN mkdir -p /app/uploads && chmod 777 /app/uploads
 
-# 设置卷挂载点
-VOLUME ["/app"]
+# 设置上传目录为卷挂载点
+VOLUME ["/app/uploads"]
 
 # 暴露端口
 EXPOSE 3000
