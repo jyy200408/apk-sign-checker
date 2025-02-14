@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APK签名验证工具</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            position: relative;
+        }
+        input[type="text"] {            
+            flex: 1;
+            padding: 8px 30px 8px 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        input[type="text"]::placeholder {
+            color: #999;
+        }
+        .clear-btn {
+            position: absolute;
+            right: 120px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            padding: 4px;
+            cursor: pointer;
+            color: #999;
+            display: none;
+        }
+        .clear-btn:hover {
+            color: #666;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>APK签名验证工具</h1>
+    <div class="input-group">
+        <input type="text" id="apkPath" placeholder="输入 http 链接或者本地路径">
+        <button class="clear-btn" id="clearBtn" onclick="clearInput()">✕</button>
+        <button onclick="document.getElementById('fileInput').click()">选择文件</button>
+        <input type="file" id="fileInput" style="display: none" accept=".apk">
+    </div>
+    <button onclick="verifySignature()">验证签名</button>
+    <div id="result"></div>
+
+    <script>
+        const apkPathInput = document.getElementById('apkPath');
+        const clearBtn = document.getElementById('clearBtn');
+
+        function updateClearButtonVisibility() {
+            clearBtn.style.display = apkPathInput.value ? 'block' : 'none';
+        }
+
+        function clearInput() {
+            apkPathInput.value = '';
+            window.selectedFile = null;
+            updateClearButtonVisibility();
+        }
+
+        apkPathInput.addEventListener('input', updateClearButtonVisibility);
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            if (e.target.files.length > 0) {
+                const file = e.target.files[0];
+                document.getElementById('apkPath').value = file.name;
+                window.selectedFile = file;
+                updateClearButtonVisibility();
+            }
+        });
+
+        async function verifySignature() {
+            const apkUrl = apkPathInput.value.trim();
+            if (!window.selectedFile && !apkUrl) {
+                alert('请选择APK文件或输入HTTPS链接');
+                return;
+            }
+
+            // 如果是HTTPS链接，不需要检查selectedFile
+            if (apkUrl.toLowerCase().startsWith('http://') || apkUrl.toLowerCase().startsWith('https://')) {
+                if (!apkUrl.toLowerCase().endsWith('.apk')) {
+                    alert('链接必须指向APK文件');
+                    return;
+                }
+            } else if (!window.selectedFile) {
+                alert('请选择APK文件或输入有效的HTTPS链接');
+                return;
+            }
+
+            const verifyButton = document.querySelector('button[onclick="verifySignature()"]');
+            verifyButton.disabled = true;
+            verifyButton.textContent = '验证中...';
+            document.getElementById('result').textContent = '正在处理，请稍候...';
+            document.getElementById('result').style.color = '#666';
+
+            const formData = new FormData();
+            if (window.selectedFile) {
+                formData.append('apk', window.selectedFile);
+            } else {
+                formData.append('url', apkUrl);
+            }
+
+            try {
+                const response = await fetch('/verify', {
+                    method: 'POST',
+                    body: formData,
+                    // 添加请求超时设置
+                    signal: AbortSignal.timeout(30000) // 30秒超时
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                if (result.error) {
+                    document.getElementById('result').textContent = '错误：' + result.error;
+                    document.getElementById('result').style.color = '#ff0000';
+                } else {
+                    const fileName = window.selectedFile ? window.selectedFile.name : apkUrl;
+                    document.getElementById('result').textContent = `文件名：${fileName}\n\n${result.output}`;
+                    document.getElementById('result').style.color = '#000000';
+                }
+            } catch (error) {
+                let errorMessage = '验证过程中出现错误：';
+                if (error.name === 'TimeoutError') {
+                    errorMessage += '请求超时，请检查网络连接或稍后重试';
+                } else if (error.name === 'AbortError') {
+                    errorMessage += '请求被中断';
+                } else if (!window.navigator.onLine) {
+                    errorMessage += '网络连接已断开';
+                } else {
+                    errorMessage += error.message;
+                }
+                document.getElementById('result').textContent = errorMessage;
+                document.getElementById('result').style.color = '#ff0000';
+            } finally {
+                verifyButton.disabled = false;
+                verifyButton.textContent = '验证签名';
+            }
+        }
+    </script>
+</body>
+</html>
